@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>φ model 時間結晶シミュレータ</title>
+<style>
+:root{--bg:#fafaf8;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--bd:#dcdcd5;--ac:#2f5fd0;--ok:#1a7f4b;--warn:#a86a0a;--bad:#c0392b;--bar:#e6e6e0;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161617;--fg:#ececea;--mut:#9a9a94;--card:#1f1f21;--bd:#35353a;--ac:#7aa2ff;--ok:#4cc38a;--warn:#e0a84a;--bad:#ff7a6b;--bar:#2c2c30;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161617;--fg:#ececea;--mut:#9a9a94;--card:#1f1f21;--bd:#35353a;--ac:#7aa2ff;--ok:#4cc38a;--warn:#e0a84a;--bad:#ff7a6b;--bar:#2c2c30;color-scheme:dark}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif}
+main{max-width:860px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:8px 0 2px}h2{font-size:16px;margin:0 0 8px}
+.sub{color:var(--mut);margin:0 0 16px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+label{display:block;font-size:13px;color:var(--mut)}
+input[type=number]{width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+button{padding:9px 18px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:#fff;font:inherit;cursor:pointer}
+button.sec{background:transparent;color:var(--ac)}button:disabled{opacity:.45;cursor:default}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td{padding:4px 6px;border-bottom:1px solid var(--bd);vertical-align:top}td:first-child{white-space:nowrap}td.s{color:var(--mut);font-size:12px}
+.tag{display:inline-block;min-width:5.2em;text-align:center;border-radius:6px;padding:0 6px;font-size:12px;color:#fff}
+.l0{background:var(--ok)}.l1{background:var(--warn)}.l2{background:var(--warn)}.l3{background:var(--bad)}
+.banner{border:2px solid var(--bad);color:var(--bad);border-radius:10px;padding:10px 14px;margin:10px 0;font-weight:700}
+.bar{height:12px;background:var(--bar);border-radius:6px;overflow:hidden}.bar>div{height:100%;width:0;background:var(--ac)}
+.big{font-size:20px;font-variant-numeric:tabular-nums;margin:8px 0 4px}
+canvas{width:100%;height:auto;border-radius:8px;border:1px solid var(--bd);display:block}
+.mut{color:var(--mut);font-size:12px}.err{color:var(--bad)}.good{color:var(--ok);font-weight:700}
+</style>
+</head>
+<body>
+<main>
+<h1>φ model 時間結晶シミュレータ</h1>
+<p class="sub">∇²[(1−iα)φ+φ̇+|φ|²φ] = φ̈+Γφ̇ ／ 1D・周期境界・RK4・dt=0.01 固定 ／ ブラウザ内で計算します</p>
+
+<div class="card">
+<h2>入力（どれか1つ入れれば動きます）</h2>
+<div class="grid">
+<label>応答周期は入力周期の何倍か<input id="ratio" type="number" step="any" min="0" placeholder="例: 2"></label>
+<label>持続時間（無次元時間）<input id="dur" type="number" step="any" min="0" placeholder="例: 1000"></label>
+<label>持続周期（応答の何周期ぶんか）<input id="cyc" type="number" step="any" min="0" placeholder="例: 50"></label>
+<label>基準の入力周期 T_in<input id="tin" type="number" step="any" min="0" value="1"></label>
+</div>
+<div class="row">
+<button id="go">実行</button><button id="stop" class="sec" disabled>停止</button>
+<label style="display:flex;gap:6px;align-items:center"><input id="force" type="checkbox">完成可能性が極めて低くても強制実行</label>
+</div>
+<p class="mut">T_resp=2π/ω=m·T_in=D/P。倍率、または持続時間と持続周期の両方で応答周期が決まります。片方だけなら ω=1 を既定にします。</p>
+</div>
+
+<div id="out"></div>
+</main>
+<script>
+const DT=0.01,TP=2*Math.PI,$=id=>document.getElementById(id);
+const LV=["高い","やや注意","低い","極めて低い"];
+const f=x=>String(Number(x.toPrecision(5)));
+const fmtDur=s=>{if(!isFinite(s))return"--:--:--";s=Math.round(Math.max(s,0));const d=Math.floor(s/86400);s%=86400;const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return(d?d+"日 ":"")+h+":"+String(m).padStart(2,"0")+":"+String(s%60).padStart(2,"0")};
+const human=s=>s<1?(s*1000).toFixed(0)+" ms":s<60?s.toFixed(1)+" 秒":s<3600?(s/60).toFixed(1)+" 分":s<86400?(s/3600).toFixed(1)+" 時間":(s/86400).toFixed(1)+" 日";
+const num=id=>{const v=$(id).value.trim();return v===""?null:Number(v)};
+let job=null;
+
+function build(){
+  const r=num("ratio"),D0=num("dur"),P0=num("cyc"),Tin=num("tin")??1;
+  for(const v of [r,D0,P0,Tin]) if(v!==null&&!(v>0&&isFinite(v))) return{err:"入力は正の有限な数にしてください。"};
+  if(r===null&&D0===null&&P0===null) return{err:"倍率・持続時間・持続周期のどれか1つ以上を入力してください。"};
+  const c1=r!==null?r*Tin:null,c2=(D0!==null&&P0!==null)?D0/P0:null;
+  if(c1!==null&&c2!==null&&Math.abs(c1-c2)/Math.max(c1,c2)>1e-3)
+    return{err:`入力が矛盾しています: 倍率×入力周期 = ${f(c1)} ですが、持続時間÷持続周期 = ${f(c2)} です。どれか1つで足ります。`};
+  const Tr=c1??c2??TP, w=TP/Tr;
+  let L=200,Lsrc="既定: 系長 200";
+  if(w<Math.SQRT2*TP/200){L=TP*Math.SQRT2/w;Lsrc="既定: ω が小さく L=200 では進行波が弱い → A=1 になる L";}
+  const q=TP/L,A=Math.sqrt((w/q)**2-1);
+  // 摩擦（論文 SM IV）: ω=αq²/(Γ+q²)。Γ=q²（q=√Γ＝振幅最大・二次安定帯の中心）に選ぶと α=2ω で A²=(ω/q)²−1 は摩擦なしと同形
+  const G=q*q,al=2*w,alc=2*Math.sqrt(G);
+  const D=D0??(P0!==null?P0*Tr:Math.max(300,40*Tr)),P=P0??D/Tr;
+  const src={m:r!==null?"指定":"導出 T_resp/T_in",D:D0!==null?"指定":P0!==null?"導出 P×T_resp":"既定: max(300, 40周期)",
+    P:P0!==null?"指定":"導出 D/T_resp",w:(c1!==null||c2!==null)?"入力から決定 ω=2π/T_resp":"既定: ω=1（α=2, Γ=q²）"};
+  // 実行計画: dt 固定 → dx を CFL から決める
+  const c=Math.sqrt(Math.hypot(1,al)+3*(1.3*A)**2);
+  const dxmin=Math.max(2*c*DT/1.5,Math.sqrt(DT/0.5)),dxreq=Math.max(1,dxmin);
+  let N=2*Math.floor(L/dxreq/2);const gridOK=N>=16;if(!gridOK)N=16;
+  const dx=L/N,qe=Math.sqrt(2-2*Math.cos(q*dx))/dx,Ae=Math.sqrt(Math.max((w/qe)**2-1,0)),Ge=qe*qe; // 格子上の厳密解: Γ_e=q_e², α=2ω
+  const spr=Math.max(1,Math.round(Math.min(100,0.5/w/DT))),dtrec=spr*DT;
+  const Tsim=Math.max(D,3*Tr),nrec=Math.ceil(Tsim/dtrec-1e-9),nwin=Math.max(40,Math.ceil(5*Tr/dtrec));
+  return{Tin,Tr,w,al,G,Ge,alc,m:Tr/Tin,D,P,L,q,A,src,Lsrc,N,dx,dxmin,dxreq,gridOK,Ae,spr,dtrec,Tsim,nrec,nwin,ext:Tsim>D+1e-9};
+}
+
+function mkSim(P){
+  const N=P.N,n=()=>new Float64Array(N),w=P.w,al=P.al,G=P.Ge,inv=1/(P.dx*P.dx),h=DT,hh=h/2;
+  const fr=n(),fi=n(),pr=n(),pi=n(),br=n(),bi=n(),cs=n(),sn=n();
+  const T=()=>[n(),n(),n(),n()];const [f2r,f2i,p2r,p2i]=T(),[f3r,f3i,p3r,p3i]=T(),[f4r,f4i,p4r,p4i]=T();
+  const s1r=n(),s1i=n(),s2r=n(),s2i=n(),s3r=n(),s3i=n(),s4r=n(),s4i=n();
+  const gauss=()=>Math.sqrt(-2*Math.log(1-Math.random()))*Math.cos(TP*Math.random());
+  for(let j=0;j<N;j++){const x=j*P.dx,th=P.q*x;cs[j]=Math.cos(th);sn[j]=Math.sin(th);
+    const a=P.Ae*cs[j],b=-P.Ae*sn[j];
+    fr[j]=a+0.01*P.Ae*gauss()/Math.SQRT2;fi[j]=b+0.01*P.Ae*gauss()/Math.SQRT2;
+    pr[j]=-w*b;pi[j]=w*a;}
+  function rhs(Fr,Fi,Pr,Pi,Sr,Si){
+    for(let j=0;j<N;j++){const m=Fr[j]*Fr[j]+Fi[j]*Fi[j];br[j]=Fr[j]+al*Fi[j]+Pr[j]+m*Fr[j];bi[j]=Fi[j]-al*Fr[j]+Pi[j]+m*Fi[j];}
+    for(let j=0;j<N;j++){const a=j?j-1:N-1,b=j<N-1?j+1:0;Sr[j]=(br[a]+br[b]-2*br[j])*inv-G*Pr[j];Si[j]=(bi[a]+bi[b]-2*bi[j])*inv-G*Pi[j];}
+  }
+  function step(){
+    rhs(fr,fi,pr,pi,s1r,s1i);
+    for(let j=0;j<N;j++){p2r[j]=pr[j]+hh*s1r[j];p2i[j]=pi[j]+hh*s1i[j];f2r[j]=fr[j]+hh*pr[j];f2i[j]=fi[j]+hh*pi[j];}
+    rhs(f2r,f2i,p2r,p2i,s2r,s2i);
+    for(let j=0;j<N;j++){p3r[j]=pr[j]+hh*s2r[j];p3i[j]=pi[j]+hh*s2i[j];f3r[j]=fr[j]+hh*p2r[j];f3i[j]=fi[j]+hh*p2i[j];}
+    rhs(f3r,f3i,p3r,p3i,s3r,s3i);
+    for(let j=0;j<N;j++){p4r[j]=pr[j]+h*s3r[j];p4i[j]=pi[j]+h*s3i[j];f4r[j]=fr[j]+h*p3r[j];f4i[j]=fi[j]+h*p3i[j];}
+    rhs(f4r,f4i,p4r,p4i,s4r,s4i);
+    const k=h/6;
+    for(let j=0;j<N;j++){
+      fr[j]+=k*(pr[j]+2*p2r[j]+2*p3r[j]+p4r[j]);fi[j]+=k*(pi[j]+2*p2i[j]+2*p3i[j]+p4i[j]);
+      pr[j]+=k*(s1r[j]+2*s2r[j]+2*s3r[j]+s4r[j]);pi[j]+=k*(s1i[j]+2*s2i[j]+2*s3i[j]+s4i[j]);}
+  }
+  function mode(){ // 設計モード a=(1/N)Σ φ e^{+iqx}
+    let re=0,im=0;for(let j=0;j<N;j++){re+=fr[j]*cs[j]-fi[j]*sn[j];im+=fr[j]*sn[j]+fi[j]*cs[j];}
+    return[re/N,im/N];}
+  return{step,mode,fr,fi};
+}
+
+function assess(P,est,maxH){
+  const it=[],add=(n,l,m,b)=>it.push({n,l,m,b:!!b});
+  add("存在",0,`厳密進行波あり（A=${f(P.A)}、格子上では A=${f(P.Ae)}）`);
+  const S=P.Tr/DT;add("時間刻み dt=0.01",S<8?3:S<25?2:0,`応答1周期 = ${S.toFixed(0)} ステップ`+(S<8?"（少なすぎて位相誤差が大きい）":""),S<8);
+  if(!P.gridOK) add("空間格子",3,`dt=0.01 固定の CFL には dx≥${f(P.dxreq)} が必要ですが、系長 L=${f(P.L)} では格子点が16個に満たない`,1);
+  else{const qd=P.q*P.dx,l=qd>2?3:qd>1?2:0;add("空間格子",l,`dx=${f(P.dx)}, N=${P.N}（CFL 下限 dx≥${f(P.dxmin)}）、1波長あたり ${P.N} 点`,l==3);}
+  add("持続（二次安定性）",0,`Γ=q² は摩擦が選ぶ安定帯 q≈√Γ（幅 ~√Γ）の中心だが、α が大きいと Benjamin–Feir 型の二次不安定が残りうる（論文 SM IV）。実測で監視します`);
+  const h=est/3600,l=h>maxH?3:h>maxH/6?2:est>600?1:0;
+  add("計算時間",l,`推定 ${human(est)}（${(P.nrec*P.spr).toLocaleString()} ステップ、上限の目安 ${maxH} 時間）`+(l==3?" → 現実的な時間で終わらない":""),l==3);
+  return{items:it,overall:Math.max(...it.map(x=>x.l)),blocked:it.some(x=>x.b&&x.l==3)};
+}
+
+function table(rows){return"<table>"+rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="s">${r[2]||""}</td></tr>`).join("")+"</table>";}
+
+function go(){
+  if(job)return;
+  const B=build(),out=$("out");
+  if(B.err){out.innerHTML=`<div class="card err">${B.err}</div>`;return;}
+  out.innerHTML=`<div class="card"><h2>入力から決まった周期・持続</h2>${table([
+    ["入力周期 T_in",f(B.Tin),"基準"],["応答周期 T_resp=2π/ω",f(B.Tr),"導出"],["倍率 m=T_resp/T_in",f(B.m),B.src.m],
+    ["持続時間 D",f(B.D),B.src.D],["持続周期 P=D/T_resp",f(B.P),B.src.P]])}</div>
+  <div class="card"><h2>設計点（自動決定。入力ではなく結果）</h2>${table([
+    ["α (activity)",f(B.al),"ω=αq²/(Γ+q²)（論文 S24）で Γ=q² とおくと α=2ω"],
+    ["Γ (摩擦)",f(B.G),`Γ=q²。q=√Γ は進行波の振幅が最大で二次安定帯の中心（論文 SM IV）。格子上の実効値 Γ_e=${f(B.Ge)}`],
+    ["L (系長)",f(B.L),B.Lsrc],
+    ["n (波の山の数)","1","摩擦で q=0 付近は減衰。n=1 が q=√Γ に一致"],["q (波数)",f(B.q),"q=2πn/L"],["ω (角周波数)",f(B.w),B.src.w],["A (振幅)",f(B.A),"A²=(αq/(Γ+q²))²−1=(ω/q)²−1"],
+    ["不安定化しきい α_c",f(B.alc),`α_c=2√Γ（S23）。α/α_c=${f(B.al/B.alc)} > 1 で進行波が存在`]])}
+    <p class="mut">格子 dx=${f(B.dx)}, N=${B.N}、総ステップ ${(B.nrec*B.spr).toLocaleString()}、記録間隔 ${B.spr} ステップ${B.ext?`。判定に最低3周期要るため T=${f(B.Tsim)} に延長`:""}</p></div>
+  <div id="feas" class="card"><h2>完成可能性の事前判定</h2>計算速度を計測中…</div><div id="run"></div>`;
+  $("go").disabled=true;
+  setTimeout(()=>{
+    // ベンチマーク
+    const S=mkSim(B);let c=0;const t0=performance.now();let el=0;
+    do{for(let i=0;i<B.spr;i++)S.step();S.mode();c++;el=performance.now()-t0;}while(!((c>=3&&el>250)||el>2000||c>=60));
+    const cyc=el/1000/c,est=cyc*B.nrec,R=assess(B,est,6),force=$("force").checked;
+    let h=`<h2>完成可能性の事前判定</h2>`+table(R.items.map(x=>[`<span class="tag l${x.l}">${["OK","注意","低い","極めて低い"][x.l]}</span> ${x.n}`,x.m]));
+    if(R.overall==3){h+=`<div class="banner">完成可能性: 極めて低い<br>`+R.items.filter(x=>x.l==3).map(x=>`理由: ${x.n} — ${x.m}`).join("<br>")+`</div>`;}
+    else h+=`<p>総合: 完成可能性 <b>${LV[R.overall]}</b></p>`;
+    if(R.blocked&&!force){h+=`<p class="err">実行を中止しました。それでも回すには「強制実行」にチェックして再実行してください。</p>`;$("feas").innerHTML=h;$("go").disabled=false;return;}
+    if(R.blocked)h+=`<p class="err">強制実行のため回しますが、結果は信頼できません。</p>`;
+    $("feas").innerHTML=h;run(B,cyc);
+  },40);
+}
+
+function run(B,cyc){
+  const S=mkSim(B),N=B.N,dtrec=B.dtrec,nrec=B.nrec,nwin=B.nwin,chk=Math.max(1,nwin>>1);
+  $("run").innerHTML=`<div class="card"><h2>実行中</h2><div class="bar"><div id="pb"></div></div>
+   <div class="big" id="eta">残り --:--:--</div><div class="mut" id="info"></div>
+   <p class="mut" style="margin-bottom:4px">Re φ（横: 時間, 縦: 位置）</p><canvas id="cv" width="720" height="200"></canvas></div><div id="res"></div>`;
+  const cv=$("cv"),g=cv.getContext("2d");g.fillStyle=getComputedStyle(document.documentElement).getPropertyValue("--bar");g.fillRect(0,0,720,200);
+  const rstride=Math.max(1,Math.ceil(nrec/600)),ncols=Math.floor(nrec/rstride)+1,cw=720/ncols;
+  let col=0;const draw=()=>{const vm=B.Ae*1.05;for(let y=0;y<200;y++){const v=S.fr[Math.floor(y/200*N)]/vm,a=Math.min(1,Math.abs(v));
+      g.fillStyle=v>0?`rgb(255,${255-a*200|0},${255-a*200|0})`:`rgb(${255-a*200|0},${255-a*150|0},255)`;g.fillRect(col*cw,199-y,cw+0.6,1);}col++;};
+  const ph=new Float64Array(nwin);let k=0,prev=null,cum=0,bad=0,tAlive=0,collapsed=false,err=null;
+  const rec=()=>{const[a,b]=S.mode(),p=Math.atan2(b,a);if(prev!==null){let d=p-prev;d-=TP*Math.round(d/TP);cum+=d;}prev=p;ph[k%nwin]=cum;return Math.hypot(a,b);};
+  rec();draw();
+  let rate=1/cyc,lastT=performance.now(),lastK=0,t0=lastT,measured=false,lastUI=0;
+  job={stop:false};$("stop").disabled=false;
+  const stats=()=>{const cnt=Math.min(k+1,nwin);if(cnt<3)return null;
+    const w=(cum-ph[(k-cnt+1+nwin*2)%nwin])/((cnt-1)*dtrec);return w;};
+  function ui(final){
+    const now=performance.now();
+    if(!final&&now-lastUI<250)return;lastUI=now;
+    if(k>lastK&&now>lastT){const inst=(k-lastK)/((now-lastT)/1000);rate=measured?0.3*inst+0.7*rate:inst;measured=true;lastT=now;lastK=k;}
+    const eta=(nrec-k)/rate,fin=new Date(Date.now()+eta*1000);
+    $("pb").style.width=(100*k/nrec).toFixed(1)+"%";
+    $("eta").textContent=final?`完了 実所要 ${fmtDur((now-t0)/1000)}`:`残り ${fmtDur(eta)}${measured?"":"（見積）"}`;
+    $("info").textContent=`${(100*k/nrec).toFixed(1)}%  t=${f(k*dtrec)}/${f(B.Tsim)}  経過 ${fmtDur((now-t0)/1000)}  終了予定 ${fin.toLocaleTimeString("ja-JP")}  ${(rate*B.spr).toLocaleString(undefined,{maximumFractionDigits:0})} step/s`;
+  }
+  function tick(){
+    const ts=performance.now();
+    while(performance.now()-ts<14&&k<nrec&&!job.stop&&!collapsed&&!err){
+      for(let i=0;i<B.spr;i++)S.step();k++;const amp=rec();
+      if(!isFinite(amp)||amp>10*B.Ae+10){err=`t=${f(k*dtrec)} で発散しました。dt=0.01 固定では数値的に保てませんでした。`;break;}
+      if(k%rstride===0&&col<ncols)draw();
+      if(k>=nwin&&k%chk===0){const w=stats();
+        if(Math.abs(w/B.w-1)<0.02&&Math.abs(amp/B.Ae-1)<0.03){tAlive=k*dtrec;bad=0;}else if(++bad>=2)collapsed=true;}
+    }
+    ui(false);
+    if(k<nrec&&!job.stop&&!collapsed&&!err)return setTimeout(tick,0);
+    ui(true);finish();
+  }
+  function finish(){
+    const stopped=job.stop;job=null;$("go").disabled=false;$("stop").disabled=true;
+    if(err){$("res").innerHTML=`<div class="card"><div class="banner">${err}<br>完成可能性: 極めて低い（この条件では dt=0.01 固定のまま数値計算を保てません）</div></div>`;return;}
+    const w=stats(),amp=rec?Math.hypot(...S.mode()):0,T=k*dtrec;
+    const okEnd=w!==null&&Math.abs(w/B.w-1)<0.02&&Math.abs(amp/B.Ae-1)<0.03;
+    const Trm=w?TP/w:Infinity;let rows=[["実行時間",`t=${f(T)}${stopped?"（停止）":collapsed?"（崩壊を検出して打ち切り）":""}`]];
+    rows.push(["応答周期（実測）",`${f(Trm)} → 入力周期の ${f(Trm/B.Tin)} 倍（設計 ${f(B.m)} 倍）`]);
+    rows.push(["摩擦・活性（設計）",`Γ=${f(B.G)}（格子上 ${f(B.Ge)}）、α=${f(B.al)}`]);
+    rows.push(["ω・振幅（実測／設計）",`ω ${w?f(w):"-"} / ${f(B.w)}、|a| ${f(amp)} / ${f(B.Ae)}`]);
+    let verdict,good=false;
+    if(collapsed){rows.push(["持続時間（実測）",`≈ ${f(tAlive)}（${f(tAlive/B.Tr)} 周期）… 要求 D=${f(B.D)}（${f(B.P)} 周期）の ${f(100*tAlive/B.D)}% で崩壊`]);verdict="✕ 設計状態は崩れ、要求どおりの完成は確認できませんでした";}
+    else if(stopped){verdict="停止しました（途中結果）";}
+    else if(okEnd){rows.push(["持続時間（実測）",`≥ ${f(T)}（${f(T/B.Tr)} 周期）… 要求 D=${f(B.D)}（${f(B.P)} 周期）の間 保たれた`]);verdict="★ 要求した持続時間の間、時間結晶状態を確認できました";good=true;}
+    else{rows.push(["持続時間（実測）","終了時点で設計状態の基準を満たさない"]);verdict="✕ 終了時点で設計状態と判定できませんでした（持続周期を増やして再実行してください）";}
+    $("res").innerHTML=`<div class="card"><h2>検証結果</h2>${table(rows)}<p class="${good?"good":""}">${verdict}</p>
+     <p class="mut">1D・単一シード・有限時間・簡易基準（設計モードの ω が設計値の2%以内、振幅が3%以内）での判定です。</p></div>`;
+  }
+  tick();
+}
+$("go").onclick=go;$("stop").onclick=()=>{if(job)job.stop=true;};
+</script>
+</body>
+</html>
